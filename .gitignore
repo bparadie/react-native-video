@@ -3,3 +3,4 @@ RCTVideo.xcodeproj/xcuserdata/**/*
 RCTVideo.xcodeproj/project.xcworkspace/**/*
 Examples/VideoPlayer/node_modules/**/*
 npm-debug.log
+.DS_Store

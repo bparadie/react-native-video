@@ -4,6 +4,7 @@
 #import "RCTEventDispatcher.h"
 #import "UIView+React.h"
 #import <AVFoundation/AVFoundation.h>
+#import <AVKit/AVKit.h>
 
 NSString *const RNVideoEventLoaded = @"videoLoaded";
 NSString *const RNVideoEventLoading = @"videoLoading";
