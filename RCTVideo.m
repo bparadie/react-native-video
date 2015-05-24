@@ -18,7 +18,7 @@ static NSString *const statusKeyPath = @"status";
 {
   AVPlayer *_player;
   AVPlayerItem *_playerItem;
-  AVPlayerLayer *_playerLayer;
+  AVPlayerViewController *_playerLayer;
   NSURL *_videoURL;
 
   /* Required to publish events */
@@ -36,6 +36,7 @@ static NSString *const statusKeyPath = @"status";
   /* Keep track of any modifiers, need to be applied after each play */
   float _volume;
   float _rate;
+  float _seek;
   BOOL _muted;
   BOOL _paused;
 }
@@ -45,10 +46,12 @@ static NSString *const statusKeyPath = @"status";
     _eventDispatcher = eventDispatcher;
     _rate = 1.0;
     _volume = 1.0;
-
+    _seek = -1.0;
+    
     _pendingSeek = false;
     _pendingSeekTime = 0.0f;
     _lastSeekTime = 0.0f;
+    _paused = YES;
   }
 
   return self;
@@ -95,23 +98,28 @@ static NSString *const statusKeyPath = @"status";
 
 #pragma mark - Player and source
 
+- (AVPlayerViewController*)createPlayerViewController:(AVPlayer*)player withPlayerItem:(AVPlayerItem*)playerItem {
+  AVPlayerViewController* playerLayer= [[AVPlayerViewController alloc] init];
+  playerLayer.view.frame = self.bounds;
+  playerLayer.player = _player;
+  playerLayer.view.frame = self.bounds;
+  return playerLayer;
+}
+
+
 - (void)setSrc:(NSDictionary *)source {
   [_playerItem removeObserver:self forKeyPath:statusKeyPath];
   _playerItem = [self playerItemForSource:source];
   [_playerItem addObserver:self forKeyPath:statusKeyPath options:0 context:nil];
 
   [_player pause];
-  [_playerLayer removeFromSuperlayer];
+  [_playerLayer.view removeFromSuperview];
 
   _player = [AVPlayer playerWithPlayerItem:_playerItem];
   _player.actionAtItemEnd = AVPlayerActionAtItemEndNone;
-
-  _playerLayer = [AVPlayerLayer playerLayerWithPlayer:_player];
-  _playerLayer.frame = self.bounds;
-  _playerLayer.needsDisplayOnBoundsChange = YES;
-
-  [self.layer addSublayer:_playerLayer];
-  self.layer.needsDisplayOnBoundsChange = YES;
+  
+  _playerLayer = [self createPlayerViewController:_player withPlayerItem:_playerItem];
+  [self addSubview:_playerLayer.view];
 
   [_eventDispatcher sendInputEventWithName:RNVideoEventLoading body:@{
     @"src": @{
@@ -168,7 +176,7 @@ static NSString *const statusKeyPath = @"status";
     } else if(_playerItem.status == AVPlayerItemStatusFailed) {
       [_eventDispatcher sendInputEventWithName:RNVideoEventLoadingError body:@{
         @"error": @{
-          @"code": [NSNumber numberWithInt:_playerItem.error.code],
+          @"code": [NSNumber numberWithInteger:_playerItem.error.code],
           @"domain": _playerItem.error.domain
         },
         @"target": self.reactTag
@@ -201,6 +209,7 @@ static NSString *const statusKeyPath = @"status";
 }
 
 - (void)setPaused:(BOOL)paused {
+
   if (paused) {
     [self stopProgressTimer];
     [_player pause];
@@ -208,11 +217,20 @@ static NSString *const statusKeyPath = @"status";
     [self startProgressTimer];
     [_player play];
   }
-
+  
   _paused = paused;
 }
 
+
 - (void)setSeek:(float)seekTime {
+  
+  if (_seek >= 0 ) {
+    [self doSeek:seekTime];
+  }
+  _seek = seekTime;
+}
+
+- (void)doSeek:(float)seekTime {
   int timeScale = 10000;
 
   AVPlayerItem *item = _player.currentItem;
@@ -224,6 +242,9 @@ static NSString *const statusKeyPath = @"status";
     // TODO figure out a good tolerance level
     CMTime tolerance = CMTimeMake(1000, timeScale);
 
+    // CMTimeShow(current);
+    // CMTimeShow(cmSeekTime);
+    
     if (CMTimeCompare(current, cmSeekTime) != 0) {
       [_player seekToTime:cmSeekTime toleranceBefore:tolerance toleranceAfter:tolerance completionHandler:^(BOOL finished) {
         [_eventDispatcher sendInputEventWithName:RNVideoEventSeek body:@{
@@ -271,6 +292,7 @@ static NSString *const statusKeyPath = @"status";
 
   [_player setRate:_rate];
   [self setPaused:_paused];
+  [self setSeek:_seek];
 }
 
 - (void)setRepeatEnabled {
@@ -306,7 +328,7 @@ static NSString *const statusKeyPath = @"status";
 
 - (void)layoutSubviews {
   [super layoutSubviews];
-  _playerLayer.frame = self.bounds;
+  _playerLayer.view.frame = self.bounds;
 }
 
 #pragma mark - Lifecycle
@@ -318,7 +340,7 @@ static NSString *const statusKeyPath = @"status";
   [_player pause];
   _player = nil;
 
-  [_playerLayer removeFromSuperlayer];
+  [_playerLayer.view removeFromSuperview];
   _playerLayer = nil;
 
   [_playerItem removeObserver:self forKeyPath:statusKeyPath];
