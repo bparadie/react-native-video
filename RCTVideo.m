@@ -38,6 +38,7 @@ static NSString *const statusKeyPath = @"status";
   float _seek;
   BOOL _muted;
   BOOL _paused;
+  id _timeObserver;
 }
 
 - (instancetype)initWithEventDispatcher:(RCTEventDispatcher *)eventDispatcher {
@@ -51,6 +52,7 @@ static NSString *const statusKeyPath = @"status";
     _pendingSeekTime = 0.0f;
     _lastSeekTime = 0.0f;
     _paused = YES;
+    _progressUpdateInterval = 250;
   }
 
   return self;
@@ -58,20 +60,45 @@ static NSString *const statusKeyPath = @"status";
 
 #pragma mark - Progress
 
+/* ---------------------------------------------------------
+ **  Get the duration for a AVPlayerItem.
+ ** ------------------------------------------------------- */
+
+- (CMTime)playerItemDuration
+{
+  AVPlayerItem *playerItem = [_player currentItem];
+  if (playerItem.status == AVPlayerItemStatusReadyToPlay)
+  {
+    return([playerItem duration]);
+  }
+  
+  return(kCMTimeInvalid);
+}
+
 - (void)sendProgressUpdate {
    AVPlayerItem *video = [_player currentItem];
    if (video == nil || video.status != AVPlayerItemStatusReadyToPlay) {
      return;
    }
 
-  if (_prevProgressUpdateTime == nil ||
-     (([_prevProgressUpdateTime timeIntervalSinceNow] * -1000.0) >= _progressUpdateInterval)) {
-    [_eventDispatcher sendInputEventWithName:RNVideoEventProgress body:@{
-      @"currentTime": [NSNumber numberWithFloat:CMTimeGetSeconds(video.currentTime)],
-      @"target": self.reactTag
-    }];
-
-    _prevProgressUpdateTime = [NSDate date];
+  CMTime playerDuration = [self playerItemDuration];
+  if (CMTIME_IS_INVALID(playerDuration))
+  {
+    return;
+  }
+  const Float64 duration = CMTimeGetSeconds(playerDuration);
+  const Float64 currentTime = CMTimeGetSeconds([_player currentTime]);
+  if( currentTime <= duration)
+  {
+    if (_prevProgressUpdateTime == nil ||
+        (([_prevProgressUpdateTime timeIntervalSinceNow] * -1000.0) >= _progressUpdateInterval)) {
+      [_eventDispatcher sendInputEventWithName:RNVideoEventProgress body:@{
+                                                                           @"currentTime": [NSNumber numberWithFloat:CMTimeGetSeconds(video.currentTime)],
+                                                                           @"target": self.reactTag
+                                                                           }];
+      
+      _prevProgressUpdateTime = [NSDate date];
+    }
   }
 }
 
@@ -80,7 +107,6 @@ static NSString *const statusKeyPath = @"status";
 }
 
 - (void)startProgressTimer {
-  _progressUpdateInterval = 250;
   _prevProgressUpdateTime = nil;
 
   [self stopProgressTimer];
@@ -117,6 +143,18 @@ static NSString *const statusKeyPath = @"status";
   _player = [AVPlayer playerWithPlayerItem:_playerItem];
   _player.actionAtItemEnd = AVPlayerActionAtItemEndNone;
   
+  Float64 progressUpdateIntervalMS = _progressUpdateInterval;
+  progressUpdateIntervalMS = progressUpdateIntervalMS / 1000;
+  // CMTimeShow(CMTimeMakeWithSeconds(progressUpdateIntervalMS, NSEC_PER_SEC));
+  
+  // @see endScrubbing in AVPlayerDemoPlaybackViewController.m of https://developer.apple.com/library/ios/samplecode/AVPlayerDemo/Introduction/Intro.html
+  __weak RCTVideo *weakSelf = self;
+  _timeObserver = [_player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(progressUpdateIntervalMS, NSEC_PER_SEC) queue:NULL usingBlock:
+                   ^(CMTime time)
+                   {
+                     [weakSelf sendProgressUpdate];
+                   }];
+  
   _playerLayer = [self createPlayerViewController:_player withPlayerItem:_playerItem];
   [self addSubview:_playerLayer.view];
 
@@ -129,6 +167,17 @@ static NSString *const statusKeyPath = @"status";
     @"target": self.reactTag
   }];
 }
+
+/* Cancels the previously registered time observer. */
+-(void)removePlayerTimeObserver
+{
+  if (_timeObserver)
+  {
+    [_player removeTimeObserver:_timeObserver];
+    _timeObserver = nil;
+  }
+}
+
 
 - (AVPlayerItem*)playerItemForSource:(NSDictionary *)source {
   bool isNetwork = [RCTConvert BOOL:[source objectForKey:@"isNetwork"]];
@@ -316,23 +365,40 @@ static NSString *const statusKeyPath = @"status";
 #pragma mark - React View Management
 
 - (void)insertReactSubview:(UIView *)view atIndex:(NSInteger)atIndex {
-  RCTLogError(@"video cannot have any subviews");
+  
+  // Why not?
+  // RCTLogError(@"video cannot have any subviews");
+  
+  view.frame = self.bounds;
+  [_playerLayer.contentOverlayView insertSubview:view atIndex:atIndex];
+  
   return;
 }
 
 - (void)removeReactSubview:(UIView *)subview {
-  RCTLogError(@"video cannot have any subviews");
+  // Why not?
+  // RCTLogError(@"video cannot have any subviews");
+  [subview removeFromSuperview];
+  
   return;
 }
 
 - (void)layoutSubviews {
   [super layoutSubviews];
   _playerLayer.view.frame = self.bounds;
+  
+  // also adjust all subviews of contentOverlayView
+  for (UIView* subview in _playerLayer.contentOverlayView.subviews) {
+    subview.frame = self.bounds;
+  }
 }
 
 #pragma mark - Lifecycle
 
 - (void)removeFromSuperview {
+
+  [self removePlayerTimeObserver];
+
   [_progressUpdateTimer invalidate];
   _prevProgressUpdateTime = nil;
 
