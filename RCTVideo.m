@@ -110,7 +110,7 @@ static NSString *const statusKeyPath = @"status";
   [_progressUpdateTimer invalidate];
 }
 
-- (void)startProgressTimer 
+- (void)startProgressTimer
 {
   _prevProgressUpdateTime = nil;
 
@@ -299,15 +299,15 @@ static NSString *const statusKeyPath = @"status";
 }
 
 
-- (void)setSeek:(float)seekTime 
-{  
+- (void)setSeek:(float)seekTime
+{
   if (_seek >= 0 ) {
     [self doSeek:seekTime];
   }
   _seek = seekTime;
 }
 
-- (void)doSeek:(float)seekTime 
+- (void)doSeek:(float)seekTime
 {
   int timeScale = 10000;
 
@@ -400,17 +400,17 @@ static NSString *const statusKeyPath = @"status";
 
 #pragma mark - React View Management
 
-- (void)insertReactSubview:(UIView *)view atIndex:(NSInteger)atIndex 
-{  
+- (void)insertReactSubview:(UIView *)view atIndex:(NSInteger)atIndex
+{
   // Why not?
   // RCTLogError(@"video cannot have any subviews");
   
   view.frame = self.bounds;
-  [_playerLayer.contentOverlayView insertSubview:view atIndex:atIndex];  
+  [_playerLayer.contentOverlayView insertSubview:view atIndex:atIndex];
   return;
 }
 
-- (void)removeReactSubview:(UIView *)subview 
+- (void)removeReactSubview:(UIView *)subview
 {
   // Why not?
   // RCTLogError(@"video cannot have any subviews");
