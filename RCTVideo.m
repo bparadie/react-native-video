@@ -17,8 +17,8 @@ static NSString *const statusKeyPath = @"status";
 {
   AVPlayer *_player;
   AVPlayerItem *_playerItem;
-  AVPlayerViewController *_playerLayer;
   BOOL _playerItemObserverSet;
+  AVPlayerViewController *_playerLayer;
   NSURL *_videoURL;
 
   /* Required to publish events */
@@ -36,9 +36,9 @@ static NSString *const statusKeyPath = @"status";
   /* Keep track of any modifiers, need to be applied after each play */
   float _volume;
   float _rate;
-  float _seek;
   BOOL _muted;
   BOOL _paused;
+  float _seek;
   id _timeObserver;
 }
 
@@ -48,11 +48,11 @@ static NSString *const statusKeyPath = @"status";
     _eventDispatcher = eventDispatcher;
     _rate = 1.0;
     _volume = 1.0;
-    _seek = -1.0;
     
     _pendingSeek = false;
     _pendingSeekTime = 0.0f;
     _lastSeekTime = 0.0f;
+    _seek = -1.0;
     _paused = YES;
     _progressUpdateInterval = 250;
   }
@@ -60,7 +60,14 @@ static NSString *const statusKeyPath = @"status";
   return self;
 }
 
-#pragma mark - Progress
+
+- (AVPlayerViewController*)createPlayerViewController:(AVPlayer*)player withPlayerItem:(AVPlayerItem*)playerItem {
+    AVPlayerViewController* playerLayer= [[AVPlayerViewController alloc] init];
+    playerLayer.view.frame = self.bounds;
+    playerLayer.player = _player;
+    playerLayer.view.frame = self.bounds;
+    return playerLayer;
+}
 
 /* ---------------------------------------------------------
  **  Get the duration for a AVPlayerItem.
@@ -68,14 +75,27 @@ static NSString *const statusKeyPath = @"status";
 
 - (CMTime)playerItemDuration
 {
-  AVPlayerItem *playerItem = [_player currentItem];
-  if (playerItem.status == AVPlayerItemStatusReadyToPlay)
-  {
-    return([playerItem duration]);
-  }
-  
-  return(kCMTimeInvalid);
+    AVPlayerItem *playerItem = [_player currentItem];
+    if (playerItem.status == AVPlayerItemStatusReadyToPlay)
+    {
+        return([playerItem duration]);
+    }
+    
+    return(kCMTimeInvalid);
 }
+
+
+/* Cancels the previously registered time observer. */
+-(void)removePlayerTimeObserver
+{
+    if (_timeObserver)
+    {
+        [_player removeTimeObserver:_timeObserver];
+        _timeObserver = nil;
+    }
+}
+
+#pragma mark - Progress
 
 - (void)sendProgressUpdate
 {
@@ -146,15 +166,6 @@ static NSString *const statusKeyPath = @"status";
 
 #pragma mark - Player and source
 
-- (AVPlayerViewController*)createPlayerViewController:(AVPlayer*)player withPlayerItem:(AVPlayerItem*)playerItem {
-  AVPlayerViewController* playerLayer= [[AVPlayerViewController alloc] init];
-  playerLayer.view.frame = self.bounds;
-  playerLayer.player = _player;
-  playerLayer.view.frame = self.bounds;
-  return playerLayer;
-}
-
-
 - (void)setSrc:(NSDictionary *)source
 {
   [self removePlayerItemObserver];
@@ -191,17 +202,6 @@ static NSString *const statusKeyPath = @"status";
     @"target": self.reactTag
   }];
 }
-
-/* Cancels the previously registered time observer. */
--(void)removePlayerTimeObserver
-{
-  if (_timeObserver)
-  {
-    [_player removeTimeObserver:_timeObserver];
-    _timeObserver = nil;
-  }
-}
-
 
 - (AVPlayerItem*)playerItemForSource:(NSDictionary *)source
 {
@@ -298,7 +298,6 @@ static NSString *const statusKeyPath = @"status";
   _paused = paused;
 }
 
-
 - (void)setSeek:(float)seekTime
 {
   if (_seek >= 0 ) {
@@ -319,9 +318,6 @@ static NSString *const statusKeyPath = @"status";
     CMTime current = item.currentTime;
     // TODO figure out a good tolerance level
     CMTime tolerance = CMTimeMake(1000, timeScale);
-
-    // CMTimeShow(current);
-    // CMTimeShow(cmSeekTime);
     
     if (CMTimeCompare(current, cmSeekTime) != 0) {
       [_player seekToTime:cmSeekTime toleranceBefore:tolerance toleranceAfter:tolerance completionHandler:^(BOOL finished) {
@@ -433,13 +429,13 @@ static NSString *const statusKeyPath = @"status";
 
 - (void)removeFromSuperview
 {
-  [self removePlayerTimeObserver];
   [_progressUpdateTimer invalidate];
   _prevProgressUpdateTime = nil;
 
   [_player pause];
   _player = nil;
 
+  [self removePlayerTimeObserver];
   [_playerLayer.view removeFromSuperview];
   _playerLayer = nil;
 
