@@ -476,9 +476,9 @@ static NSString *const statusKeyPath = @"status";
 
 - (void)layoutSubviews
 {
+  [super layoutSubviews];
   if( _controls )
   {
-    [super layoutSubviews];
     _playerViewController.view.frame = self.bounds;
   
     // also adjust all subviews of contentOverlayView
