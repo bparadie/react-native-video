@@ -401,30 +401,36 @@ static NSString *const statusKeyPath = @"status";
 
 - (void)usePlayerViewController
 {
-    Float64 progressUpdateIntervalMS = _progressUpdateInterval;
-    progressUpdateIntervalMS = progressUpdateIntervalMS / 1000;
-    // CMTimeShow(CMTimeMakeWithSeconds(progressUpdateIntervalMS, NSEC_PER_SEC));
-    
-    // @see endScrubbing in AVPlayerDemoPlaybackViewController.m of https://developer.apple.com/library/ios/samplecode/AVPlayerDemo/Introduction/Intro.html
-    __weak RCTVideo *weakSelf = self;
-    _timeObserver = [_player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(progressUpdateIntervalMS, NSEC_PER_SEC) queue:NULL usingBlock:
-                     ^(CMTime time)
-                     {
-                         [weakSelf sendProgressUpdate];
-                     }];
-    
-    _playerViewController = [self createPlayerViewController:_player withPlayerItem:_playerItem];
-    [self addSubview:_playerViewController.view];
+    if( _player )
+    {
+        Float64 progressUpdateIntervalMS = _progressUpdateInterval;
+        progressUpdateIntervalMS = progressUpdateIntervalMS / 1000;
+        // CMTimeShow(CMTimeMakeWithSeconds(progressUpdateIntervalMS, NSEC_PER_SEC));
+        
+        // @see endScrubbing in AVPlayerDemoPlaybackViewController.m of https://developer.apple.com/library/ios/samplecode/AVPlayerDemo/Introduction/Intro.html
+        __weak RCTVideo *weakSelf = self;
+        _timeObserver = [_player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(progressUpdateIntervalMS, NSEC_PER_SEC) queue:NULL usingBlock:
+                         ^(CMTime time)
+                         {
+                             [weakSelf sendProgressUpdate];
+                         }];
+        
+        _playerViewController = [self createPlayerViewController:_player withPlayerItem:_playerItem];
+        [self addSubview:_playerViewController.view];
+    }
 }
 
 - (void)usePlayerLayer
 {
-    _playerLayer = [AVPlayerLayer playerLayerWithPlayer:_player];
-    _playerLayer.frame = self.bounds;
-    _playerLayer.needsDisplayOnBoundsChange = YES;
+    if( _player )
+    {
+      _playerLayer = [AVPlayerLayer playerLayerWithPlayer:_player];
+      _playerLayer.frame = self.bounds;
+      _playerLayer.needsDisplayOnBoundsChange = YES;
     
-    [self.layer addSublayer:_playerLayer];
-    self.layer.needsDisplayOnBoundsChange = YES;
+      [self.layer addSublayer:_playerLayer];
+      self.layer.needsDisplayOnBoundsChange = YES;
+    }
 }
 
 - (void)setControls:(BOOL)controls
@@ -435,11 +441,13 @@ static NSString *const statusKeyPath = @"status";
         if( _controls )
         {
             [_playerLayer removeFromSuperlayer];
+            _playerLayer = nil;
             [self usePlayerViewController];
         }
         else
         {
             [_playerViewController.view removeFromSuperview];
+            _playerViewController = nil;
             [self usePlayerLayer];
         }
     }
