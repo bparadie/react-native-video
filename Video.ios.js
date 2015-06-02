@@ -102,7 +102,7 @@ var Video = React.createClass({
 var RCTVideo = createReactIOSNativeComponentClass({
   validAttributes: merge(ReactNativeViewAttributes.UIView,
     {src: {diff: deepDiffer}, resizeMode: true, repeat: true,
-     seek: true, paused: true, muted: true, volume: true, rate: true}),
+     currentTime: true, paused: true, muted: true, volume: true, rate: true, controls: true}),
   uiViewClassName: 'RCTVideo',
 });
 
