@@ -38,7 +38,6 @@ static NSString *const statusKeyPath = @"status";
   BOOL _muted;
   BOOL _paused;
   BOOL _controls;
-  float _currentTime;
   id _timeObserver;
 }
 
@@ -173,7 +172,7 @@ static NSString *const statusKeyPath = @"status";
                          [weakSelf sendProgressUpdate];
                      }];
     
-  [self setControls:_controls];
+  // [self setControls:_controls];
 
   [_eventDispatcher sendInputEventWithName:RNVideoEventLoading body:@{
     @"src": @{
@@ -286,7 +285,7 @@ static NSString *const statusKeyPath = @"status";
 
 - (float)getCurrentTime
 {
-    return _playerItem != NULL ? CMTimeGetSeconds(_playerItem.currentTime) : 0;
+  return _playerItem != NULL ? CMTimeGetSeconds(_playerItem.currentTime) : 0;
 }
 
 - (void)setCurrentTime:(float)currentTime
@@ -358,7 +357,6 @@ static NSString *const statusKeyPath = @"status";
 
   [_player setRate:_rate];
   [self setPaused:_paused];
-  [self setSeek:_currentTime];
   [self setControls:_controls];
 }
 
@@ -429,6 +427,13 @@ static NSString *const statusKeyPath = @"status";
 
 - (void)insertReactSubview:(UIView *)view atIndex:(NSInteger)atIndex
 {
+  // We are early in the game and somebody wants to set a subview.
+  // That can only be in the context of playerViewController.
+  if( !_controls && !_playerLayer && !_playerViewController )
+  {
+    [self setControls:true];
+  }
+  
   if( _controls )
   {
      view.frame = self.bounds;
