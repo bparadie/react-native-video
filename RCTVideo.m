@@ -30,10 +30,8 @@ static NSString *const statusKeyPath = @"status";
   float _lastSeekTime;
 
   /* For sending videoProgress events */
-  id _progressUpdateTimer;
-  int _progressUpdateInterval;
-  NSDate *_prevProgressUpdateTime;
-
+  Float64 _progressUpdateInterval;
+    
   /* Keep track of any modifiers, need to be applied after each play */
   float _volume;
   float _rate;
@@ -116,31 +114,11 @@ static NSString *const statusKeyPath = @"status";
   const Float64 currentTime = CMTimeGetSeconds([_player currentTime]);
   if( currentTime <= duration)
   {
-    if (_prevProgressUpdateTime == nil ||
-        (([_prevProgressUpdateTime timeIntervalSinceNow] * -1000.0) >= _progressUpdateInterval)) {
       [_eventDispatcher sendInputEventWithName:RNVideoEventProgress body:@{
-                                                                           @"currentTime": [NSNumber numberWithFloat:CMTimeGetSeconds(video.currentTime)],
-                                                                           @"target": self.reactTag
-                                                                           }];
-      
-      _prevProgressUpdateTime = [NSDate date];
-    }
+                                                                         @"currentTime": [NSNumber numberWithFloat:CMTimeGetSeconds(video.currentTime)],
+                                                                         @"target": self.reactTag
+                                                                         }];
   }
-}
-
-- (void)stopProgressTimer
-{
-  [_progressUpdateTimer invalidate];
-}
-
-- (void)startProgressTimer
-{
-  _prevProgressUpdateTime = nil;
-
-  [self stopProgressTimer];
-
-  _progressUpdateTimer = [CADisplayLink displayLinkWithTarget:self selector:@selector(sendProgressUpdate)];
-  [_progressUpdateTimer addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
 }
 
 - (void)notifyEnd:(NSNotification *)notification
@@ -180,10 +158,22 @@ static NSString *const statusKeyPath = @"status";
   _playerLayer = nil;
   [_playerViewController.view removeFromSuperview];
   _playerViewController = nil;
+  [self removePlayerTimeObserver];
 
   _player = [AVPlayer playerWithPlayerItem:_playerItem];
   _player.actionAtItemEnd = AVPlayerActionAtItemEndNone;
 
+  const Float64 progressUpdateIntervalMS = _progressUpdateInterval / 1000;
+  // CMTimeShow(CMTimeMakeWithSeconds(progressUpdateIntervalMS, NSEC_PER_SEC));
+    
+  // @see endScrubbing in AVPlayerDemoPlaybackViewController.m of https://developer.apple.com/library/ios/samplecode/AVPlayerDemo/Introduction/Intro.html
+  __weak RCTVideo *weakSelf = self;
+  _timeObserver = [_player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(progressUpdateIntervalMS, NSEC_PER_SEC) queue:NULL usingBlock:
+                     ^(CMTime time)
+                     {
+                         [weakSelf sendProgressUpdate];
+                     }];
+    
   [self setControls:_controls];
 
   [_eventDispatcher sendInputEventWithName:RNVideoEventLoading body:@{
@@ -237,7 +227,6 @@ static NSString *const statusKeyPath = @"status";
         @"target": self.reactTag
       }];
 
-      [self startProgressTimer];
       [self attachListeners];
       [self applyModifiers];
     } else if(_playerItem.status == AVPlayerItemStatusFailed) {
@@ -288,10 +277,8 @@ static NSString *const statusKeyPath = @"status";
 - (void)setPaused:(BOOL)paused
 {
   if (paused) {
-    [self stopProgressTimer];
     [_player pause];
   } else {
-    [self startProgressTimer];
     [_player play];
   }
   
@@ -399,18 +386,6 @@ static NSString *const statusKeyPath = @"status";
 {
     if( _player )
     {
-        Float64 progressUpdateIntervalMS = _progressUpdateInterval;
-        progressUpdateIntervalMS = progressUpdateIntervalMS / 1000;
-        // CMTimeShow(CMTimeMakeWithSeconds(progressUpdateIntervalMS, NSEC_PER_SEC));
-        
-        // @see endScrubbing in AVPlayerDemoPlaybackViewController.m of https://developer.apple.com/library/ios/samplecode/AVPlayerDemo/Introduction/Intro.html
-        __weak RCTVideo *weakSelf = self;
-        _timeObserver = [_player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(progressUpdateIntervalMS, NSEC_PER_SEC) queue:NULL usingBlock:
-                         ^(CMTime time)
-                         {
-                             [weakSelf sendProgressUpdate];
-                         }];
-        
         _playerViewController = [self createPlayerViewController:_player withPlayerItem:_playerItem];
         [self addSubview:_playerViewController.view];
     }
@@ -500,9 +475,6 @@ static NSString *const statusKeyPath = @"status";
 
 - (void)removeFromSuperview
 {
-  [_progressUpdateTimer invalidate];
-  _prevProgressUpdateTime = nil;
-
   [_player pause];
   _player = nil;
 
