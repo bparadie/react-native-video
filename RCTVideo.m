@@ -38,7 +38,7 @@ static NSString *const statusKeyPath = @"status";
   BOOL _muted;
   BOOL _paused;
   BOOL _controls;
-  float _seek;
+  float _currentTime;
   id _timeObserver;
 }
 
@@ -52,7 +52,6 @@ static NSString *const statusKeyPath = @"status";
     _pendingSeek = false;
     _pendingSeekTime = 0.0f;
     _lastSeekTime = 0.0f;
-    _seek = -1.0;
     _paused = YES;
     _progressUpdateInterval = 250;
     _controls = NO;
@@ -285,15 +284,17 @@ static NSString *const statusKeyPath = @"status";
   _paused = paused;
 }
 
-- (void)setSeek:(float)seekTime
+- (float)getCurrentTime
 {
-  if (_seek >= 0 ) {
-    [self doSeek:seekTime];
-  }
-  _seek = seekTime;
+    return _playerItem != NULL ? CMTimeGetSeconds(_playerItem.currentTime) : 0;
 }
 
-- (void)doSeek:(float)seekTime
+- (void)setCurrentTime:(float)currentTime
+{
+  [self setSeek: currentTime];
+}
+
+- (void)setSeek:(float)seekTime
 {
   int timeScale = 10000;
 
@@ -357,7 +358,7 @@ static NSString *const statusKeyPath = @"status";
 
   [_player setRate:_rate];
   [self setPaused:_paused];
-  [self setSeek:_seek];
+  [self setSeek:_currentTime];
   [self setControls:_controls];
 }
 
