@@ -18,7 +18,8 @@ static NSString *const statusKeyPath = @"status";
   AVPlayer *_player;
   AVPlayerItem *_playerItem;
   BOOL _playerItemObserverSet;
-  AVPlayerViewController *_playerLayer;
+  AVPlayerLayer *_playerLayer;
+  AVPlayerViewController *_playerViewController;
   NSURL *_videoURL;
 
   /* Required to publish events */
@@ -38,6 +39,7 @@ static NSString *const statusKeyPath = @"status";
   float _rate;
   BOOL _muted;
   BOOL _paused;
+  BOOL _controls;
   float _seek;
   id _timeObserver;
 }
@@ -55,6 +57,7 @@ static NSString *const statusKeyPath = @"status";
     _seek = -1.0;
     _paused = YES;
     _progressUpdateInterval = 250;
+    _controls = NO;
   }
 
   return self;
@@ -173,25 +176,20 @@ static NSString *const statusKeyPath = @"status";
   [self addPlayerItemObserver];
 
   [_player pause];
-  [_playerLayer.view removeFromSuperview];
+  [_playerViewController.view removeFromSuperview];
+  [_playerLayer removeFromSuperlayer];
 
   _player = [AVPlayer playerWithPlayerItem:_playerItem];
   _player.actionAtItemEnd = AVPlayerActionAtItemEndNone;
-  
-  Float64 progressUpdateIntervalMS = _progressUpdateInterval;
-  progressUpdateIntervalMS = progressUpdateIntervalMS / 1000;
-  // CMTimeShow(CMTimeMakeWithSeconds(progressUpdateIntervalMS, NSEC_PER_SEC));
-  
-  // @see endScrubbing in AVPlayerDemoPlaybackViewController.m of https://developer.apple.com/library/ios/samplecode/AVPlayerDemo/Introduction/Intro.html
-  __weak RCTVideo *weakSelf = self;
-  _timeObserver = [_player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(progressUpdateIntervalMS, NSEC_PER_SEC) queue:NULL usingBlock:
-                   ^(CMTime time)
-                   {
-                     [weakSelf sendProgressUpdate];
-                   }];
-  
-  _playerLayer = [self createPlayerViewController:_player withPlayerItem:_playerItem];
-  [self addSubview:_playerLayer.view];
+
+  if( _controls )
+  {
+    [self usePlayerViewController];
+  }
+  else
+  {
+    [self usePlayerLayer];
+  }
 
   [_eventDispatcher sendInputEventWithName:RNVideoEventLoading body:@{
     @"src": @{
@@ -282,7 +280,14 @@ static NSString *const statusKeyPath = @"status";
 
 - (void)setResizeMode:(NSString*)mode
 {
-  _playerLayer.videoGravity = mode;
+  if( _controls )
+  {
+    _playerViewController.videoGravity = mode;
+  }
+  else
+  {
+    _playerLayer.videoGravity = mode;
+  }
 }
 
 - (void)setPaused:(BOOL)paused
@@ -394,34 +399,96 @@ static NSString *const statusKeyPath = @"status";
   }
 }
 
+- (void)usePlayerViewController
+{
+    Float64 progressUpdateIntervalMS = _progressUpdateInterval;
+    progressUpdateIntervalMS = progressUpdateIntervalMS / 1000;
+    // CMTimeShow(CMTimeMakeWithSeconds(progressUpdateIntervalMS, NSEC_PER_SEC));
+    
+    // @see endScrubbing in AVPlayerDemoPlaybackViewController.m of https://developer.apple.com/library/ios/samplecode/AVPlayerDemo/Introduction/Intro.html
+    __weak RCTVideo *weakSelf = self;
+    _timeObserver = [_player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(progressUpdateIntervalMS, NSEC_PER_SEC) queue:NULL usingBlock:
+                     ^(CMTime time)
+                     {
+                         [weakSelf sendProgressUpdate];
+                     }];
+    
+    _playerViewController = [self createPlayerViewController:_player withPlayerItem:_playerItem];
+    [self addSubview:_playerViewController.view];
+}
+
+- (void)usePlayerLayer
+{
+    _playerLayer = [AVPlayerLayer playerLayerWithPlayer:_player];
+    _playerLayer.frame = self.bounds;
+    _playerLayer.needsDisplayOnBoundsChange = YES;
+    
+    [self.layer addSublayer:_playerLayer];
+    self.layer.needsDisplayOnBoundsChange = YES;
+}
+
+- (void)setControls:(BOOL)controls
+{
+    if( _controls != controls )
+    {
+        _controls = controls;
+        if( _controls )
+        {
+            [_playerLayer removeFromSuperlayer];
+            [self usePlayerViewController];
+        }
+        else
+        {
+            [_playerViewController.view removeFromSuperview];
+            [self usePlayerLayer];
+        }
+    }
+}
+
 #pragma mark - React View Management
 
 - (void)insertReactSubview:(UIView *)view atIndex:(NSInteger)atIndex
 {
-  // Why not?
-  // RCTLogError(@"video cannot have any subviews");
-  
-  view.frame = self.bounds;
-  [_playerLayer.contentOverlayView insertSubview:view atIndex:atIndex];
+  if( _controls )
+  {
+     view.frame = self.bounds;
+     [_playerViewController.contentOverlayView insertSubview:view atIndex:atIndex];
+  }
+  else
+  {
+     RCTLogError(@"video cannot have any subviews");
+  }
   return;
 }
 
 - (void)removeReactSubview:(UIView *)subview
 {
-  // Why not?
-  // RCTLogError(@"video cannot have any subviews");
-  [subview removeFromSuperview];
+  if( _controls )
+  {
+      [subview removeFromSuperview];
+  }
+  else
+  {
+    RCTLogError(@"video cannot have any subviews");
+  }
   return;
 }
 
 - (void)layoutSubviews
 {
-  [super layoutSubviews];
-  _playerLayer.view.frame = self.bounds;
+  if( _controls )
+  {
+    [super layoutSubviews];
+    _playerViewController.view.frame = self.bounds;
   
-  // also adjust all subviews of contentOverlayView
-  for (UIView* subview in _playerLayer.contentOverlayView.subviews) {
-    subview.frame = self.bounds;
+    // also adjust all subviews of contentOverlayView
+    for (UIView* subview in _playerViewController.contentOverlayView.subviews) {
+      subview.frame = self.bounds;
+    }
+  }
+  else
+  {
+    _playerLayer.frame = self.bounds;
   }
 }
 
@@ -435,10 +502,13 @@ static NSString *const statusKeyPath = @"status";
   [_player pause];
   _player = nil;
 
-  [self removePlayerTimeObserver];
-  [_playerLayer.view removeFromSuperview];
+  [_playerLayer removeFromSuperlayer];
   _playerLayer = nil;
+  
+  [_playerViewController.view removeFromSuperview];
+  _playerViewController = nil;
 
+  [self removePlayerTimeObserver];
   [self removePlayerItemObserver];
 
   _eventDispatcher = nil;
