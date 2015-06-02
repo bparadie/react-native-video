@@ -176,20 +176,15 @@ static NSString *const statusKeyPath = @"status";
   [self addPlayerItemObserver];
 
   [_player pause];
-  [_playerViewController.view removeFromSuperview];
   [_playerLayer removeFromSuperlayer];
+  _playerLayer = nil;
+  [_playerViewController.view removeFromSuperview];
+  _playerViewController = nil;
 
   _player = [AVPlayer playerWithPlayerItem:_playerItem];
   _player.actionAtItemEnd = AVPlayerActionAtItemEndNone;
 
-  if( _controls )
-  {
-    [self usePlayerViewController];
-  }
-  else
-  {
-    [self usePlayerLayer];
-  }
+  [self setControls:_controls];
 
   [_eventDispatcher sendInputEventWithName:RNVideoEventLoading body:@{
     @"src": @{
@@ -376,6 +371,7 @@ static NSString *const statusKeyPath = @"status";
   [_player setRate:_rate];
   [self setPaused:_paused];
   [self setSeek:_seek];
+  [self setControls:_controls];
 }
 
 - (void)setRepeatEnabled
@@ -435,7 +431,7 @@ static NSString *const statusKeyPath = @"status";
 
 - (void)setControls:(BOOL)controls
 {
-    if( _controls != controls )
+    if( _controls != controls || (!_playerLayer && !_playerViewController) )
     {
         _controls = controls;
         if( _controls )
