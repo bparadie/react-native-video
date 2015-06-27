@@ -3,6 +3,7 @@
 #import "RCTBridgeModule.h"
 #import "RCTEventDispatcher.h"
 #import "UIView+React.h"
+#import <AVFoundation/AVFoundation.h>
 
 NSString *const RNVideoEventLoaded = @"videoLoaded";
 NSString *const RNVideoEventLoading = @"videoLoading";
@@ -14,7 +15,6 @@ NSString *const RNVideoEventEnd = @"videoEnd";
 // HTML5 compatible events, @see http://www.w3schools.com/tags/ref_av_dom.asp
 NSString *const RNVideoEventPlay = @"videoPlay";    // http://www.w3schools.com/tags/av_event_play.asp
 NSString *const RNVideoEventPause = @"videoPause"; // http://www.w3schools.com/tags/av_event_pause.asp
-
 
 static NSString *const statusKeyPath = @"status";
 
@@ -45,6 +45,8 @@ static NSString *const statusKeyPath = @"status";
   float _rate;
   BOOL _muted;
   BOOL _paused;
+  BOOL _repeat;
+  NSString * _resizeMode;
   BOOL _controls;
   id _timeObserver;
 }
@@ -53,18 +55,50 @@ static NSString *const statusKeyPath = @"status";
 {
   if ((self = [super init])) {
     _eventDispatcher = eventDispatcher;
+
     _rate = 1.0;
     _volume = 1.0;
-    
+    _resizeMode = @"AVLayerVideoGravityResizeAspectFill";
     _pendingSeek = false;
     _pendingSeekTime = 0.0f;
     _lastSeekTime = 0.0f;
+      
+      [[NSNotificationCenter defaultCenter] addObserver:self
+                                               selector:@selector(applicationWillResignActive:)
+                                                   name:UIApplicationWillResignActiveNotification
+                                                 object:nil];
+      
+      [[NSNotificationCenter defaultCenter] addObserver:self
+                                               selector:@selector(applicationWillEnterForeground:)
+                                                   name:UIApplicationWillEnterForegroundNotification
+                                                 object:nil];
     _paused = YES;
     _progressUpdateInterval = 250;
     _controls = NO;
   }
 
   return self;
+}
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+#pragma mark - App lifecycle handlers
+
+- (void)applicationWillResignActive:(NSNotification *)notification
+{
+    if (!_paused) {
+        [self stopProgressTimer];
+        [_player pause];
+    }
+}
+
+- (void)applicationWillEnterForeground:(NSNotification *)notification
+{
+    [self startProgressTimer];
+    [self applyModifiers];
 }
 
 
@@ -102,6 +136,110 @@ static NSString *const statusKeyPath = @"status";
     }
 }
 
+- (void)sendBetterProgressUpdate
+{
+    CMTime playerDuration = [self playerItemDuration];
+    if (CMTIME_IS_INVALID(playerDuration))
+    {
+        return;
+    }
+    
+    CMTime currentTime = _player.currentTime;
+    const Float64 duration = CMTimeGetSeconds(playerDuration);
+    const Float64 currentTimeSecs = CMTimeGetSeconds(currentTime);
+    if( currentTimeSecs >= 0 && currentTimeSecs <= duration)
+    {
+        [_eventDispatcher sendInputEventWithName:RNVideoEventProgress body:@{
+                                                                             @"currentTime": [NSNumber numberWithFloat:CMTimeGetSeconds(currentTime)],
+                                                                             @"atValue": [NSNumber numberWithLongLong:currentTime.value],
+                                                                             @"atTimescale": [NSNumber numberWithInt:currentTime.timescale],
+                                                                             @"target": self.reactTag
+                                                                             }];
+    }
+}
+
+
+- (void)notifyEnd:(NSNotification *)notification
+{
+    [_eventDispatcher sendInputEventWithName:RNVideoEventEnd body:@{
+                                                                    @"target": self.reactTag
+                                                                    }];
+}
+
+- (void)addPlayerObserver
+{
+    // @see http://stackoverflow.com/questions/7575494/avplayer-notification-for-play-pause-state
+    
+    if (!_playerObserverSet) {
+        _playerObserverSet = _ignoreFirstPlay = _ignoreFirstPause = YES;
+        [_player addObserver:self forKeyPath:@"rate" options:(NSKeyValueObservingOptionInitial | NSKeyValueObservingOptionNew)  context:nil];
+    }
+}
+
+- (void)removePlayerObserver
+{
+    if (_playerObserverSet) {
+        _playerObserverSet = NO;
+        [_player removeObserver:self forKeyPath:@"rate"];
+    }
+}
+
+- (float)getCurrentTime
+{
+    return _playerItem != NULL ? CMTimeGetSeconds(_playerItem.currentTime) : 0;
+}
+
+- (void)setCurrentTime:(float)currentTime
+{
+    if( currentTime >= 0 )
+    {
+        [self setSeek: currentTime];
+    }
+}
+
+
+- (void)usePlayerViewController
+{
+    if( _player )
+    {
+        _playerViewController = [self createPlayerViewController:_player withPlayerItem:_playerItem];
+        [self addSubview:_playerViewController.view];
+    }
+}
+
+- (void)usePlayerLayer
+{
+    if( _player )
+    {
+        _playerLayer = [AVPlayerLayer playerLayerWithPlayer:_player];
+        _playerLayer.frame = self.bounds;
+        _playerLayer.needsDisplayOnBoundsChange = YES;
+        
+        [self.layer addSublayer:_playerLayer];
+        self.layer.needsDisplayOnBoundsChange = YES;
+    }
+}
+
+- (void)setControls:(BOOL)controls
+{
+    if( _controls != controls || (!_playerLayer && !_playerViewController) )
+    {
+        _controls = controls;
+        if( _controls )
+        {
+            [_playerLayer removeFromSuperlayer];
+            _playerLayer = nil;
+            [self usePlayerViewController];
+        }
+        else
+        {
+            [_playerViewController.view removeFromSuperview];
+            _playerViewController = nil;
+            [self usePlayerLayer];
+        }
+    }
+}
+
 #pragma mark - Progress
 
 - (void)sendProgressUpdate
@@ -111,49 +249,59 @@ static NSString *const statusKeyPath = @"status";
      return;
    }
 
-  CMTime playerDuration = [self playerItemDuration];
-  if (CMTIME_IS_INVALID(playerDuration))
-  {
-    return;
-  }
-  
-  CMTime currentTime = _player.currentTime;
-  const Float64 duration = CMTimeGetSeconds(playerDuration);
-  const Float64 currentTimeSecs = CMTimeGetSeconds(currentTime);
-  if( currentTimeSecs >= 0 && currentTimeSecs <= duration)
-  {
-      [_eventDispatcher sendInputEventWithName:RNVideoEventProgress body:@{
-                                                                         @"currentTime": [NSNumber numberWithFloat:CMTimeGetSeconds(currentTime)],
-                                                                         @"atValue": [NSNumber numberWithLongLong:currentTime.value],
-                                                                         @"atTimescale": [NSNumber numberWithInt:currentTime.timescale],
-                                                                         @"target": self.reactTag
-                                                                         }];
-  }
+/*
+    if (_prevProgressUpdateTime == nil ||
+        (([_prevProgressUpdateTime timeIntervalSinceNow] * -1000.0) >= _progressUpdateInterval)) {
+        [_eventDispatcher sendInputEventWithName:RNVideoEventProgress body:@{
+                                                                             @"currentTime": [NSNumber numberWithFloat:CMTimeGetSeconds(video.currentTime)],
+                                                                             @"playableDuration": [self calculatePlayableDuration],
+                                                                             @"target": self.reactTag
+                                                                             }];
+        
+        _prevProgressUpdateTime = [NSDate date];
+    }
+*/
+    [self sendBetterProgressUpdate];
 }
 
-- (void)notifyEnd:(NSNotification *)notification
-{
-    [_eventDispatcher sendInputEventWithName:RNVideoEventEnd body:@{
-        @"target": self.reactTag
-    }];
+/*!
+ * Calculates and returns the playable duration of the current player item using its loaded time ranges.
+ *
+ * \returns The playable duration of the current player item in seconds.
+ */
+- (NSNumber *)calculatePlayableDuration {
+    AVPlayerItem *video = _player.currentItem;
+    if (video.status == AVPlayerItemStatusReadyToPlay) {
+        __block CMTimeRange effectiveTimeRange;
+        [video.loadedTimeRanges enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
+            CMTimeRange timeRange = [obj CMTimeRangeValue];
+            if (CMTimeRangeContainsTime(timeRange, video.currentTime)) {
+                effectiveTimeRange = timeRange;
+                *stop = YES;
+            }
+        }];
+        Float64 playableDuration = CMTimeGetSeconds(CMTimeRangeGetEnd(effectiveTimeRange));
+        if (playableDuration > 0) {
+            return [NSNumber numberWithFloat:playableDuration];
+        }
+    }
+    return [NSNumber numberWithInteger:0];
 }
 
-- (void)addPlayerObserver
+- (void)stopProgressTimer
 {
-  // @see http://stackoverflow.com/questions/7575494/avplayer-notification-for-play-pause-state
-  
-  if (!_playerObserverSet) {
-    _playerObserverSet = _ignoreFirstPlay = _ignoreFirstPause = YES;
-    [_player addObserver:self forKeyPath:@"rate" options:(NSKeyValueObservingOptionInitial | NSKeyValueObservingOptionNew)  context:nil];
-  }
+    // [_progressUpdateTimer invalidate];
 }
 
-- (void)removePlayerObserver
+- (void)startProgressTimer
 {
-  if (_playerObserverSet) {
-    _playerObserverSet = NO;
-    [_player removeObserver:self forKeyPath:@"rate"];
-  }
+    _progressUpdateInterval = 250;
+    // _prevProgressUpdateTime = nil;
+    
+    [self stopProgressTimer];
+    
+    // _progressUpdateTimer = [CADisplayLink displayLinkWithTarget:self selector:@selector(sendProgressUpdate)];
+    // [_progressUpdateTimer addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
 }
 
 - (void)addPlayerItemObserver
@@ -179,7 +327,6 @@ static NSString *const statusKeyPath = @"status";
 {
   [self removePlayerObserver];
   [self removePlayerItemObserver];
-
   _playerItem = [self playerItemForSource:source];
   [self addPlayerItemObserver];
 
@@ -209,8 +356,6 @@ static NSString *const statusKeyPath = @"status";
                          [weakSelf sendProgressUpdate];
                      }];
     
-  // [self setControls:_controls];
-
   [_eventDispatcher sendInputEventWithName:RNVideoEventLoading body:@{
     @"src": @{
       @"uri": [source objectForKey:@"uri"],
@@ -271,35 +416,27 @@ static NSString *const statusKeyPath = @"status";
   else if (object == _playerItem) {
     if (_playerItem.status == AVPlayerItemStatusReadyToPlay) {
       float duration = CMTimeGetSeconds(_playerItem.asset.duration);
-      CMTime currentTime = _playerItem.currentTime;
-      
+
       if (isnan(duration)) {
         duration = 0.0;
       }
       
-
-      NSString *mode;
-      if(_controls){
-        mode = _playerViewController.videoGravity;
-      }else{
-        mode = _playerLayer.videoGravity;
-      }
-      
       [_eventDispatcher sendInputEventWithName:RNVideoEventLoaded body:@{
         @"duration": [NSNumber numberWithFloat:duration],
-        @"currentTime": [NSNumber numberWithFloat:CMTimeGetSeconds(currentTime)],
+        @"currentTime": [NSNumber numberWithFloat:CMTimeGetSeconds(_playerItem.currentTime)],
         @"canPlayReverse": [NSNumber numberWithBool:_playerItem.canPlayReverse],
         @"canPlayFastForward": [NSNumber numberWithBool:_playerItem.canPlayFastForward],
         @"canPlaySlowForward": [NSNumber numberWithBool:_playerItem.canPlaySlowForward],
         @"canPlaySlowReverse": [NSNumber numberWithBool:_playerItem.canPlaySlowReverse],
         @"canStepBackward": [NSNumber numberWithBool:_playerItem.canStepBackward],
         @"canStepForward": [NSNumber numberWithBool:_playerItem.canStepForward],
-        @"atValue": [NSNumber numberWithLongLong:currentTime.value],
-        @"atTimescale": [NSNumber numberWithInt:currentTime.timescale],
         @"target": self.reactTag,
-        @"mode": mode
+        @"atValue": [NSNumber numberWithLongLong:_playerItem.currentTime.value],
+        @"atTimescale": [NSNumber numberWithInt:_playerItem.currentTime.timescale],
+        @"mode": _resizeMode
       }];
 
+      [self startProgressTimer];
       [self attachListeners];
       [self applyModifiers];
     } else if(_playerItem.status == AVPlayerItemStatusFailed) {
@@ -318,64 +455,58 @@ static NSString *const statusKeyPath = @"status";
 
 - (void)attachListeners
 {
-    // listen for end of file
-    [[NSNotificationCenter defaultCenter] addObserver:self
-        selector:@selector(notifyEnd:)
-        name:AVPlayerItemDidPlayToEndTimeNotification
-        object:[_player currentItem]];
-
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // listen for end of file
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(playerItemDidEnd:)
+                                                     name:AVPlayerItemDidPlayToEndTimeNotification
+                                                   object:[_player currentItem]];
+    });
 }
 
-- (void)playerItemDidReachEnd:(NSNotification *)notification
+- (void)playerItemDidEnd:(NSNotification *)notification
 {
-    AVPlayerItem *item = [notification object];
-    [item seekToTime:kCMTimeZero];
-    [self applyModifiers];
+    [_eventDispatcher sendInputEventWithName:RNVideoEventEnd body:@{
+                                                                    @"target": self.reactTag
+                                                                    }];
+    if (_repeat) {
+        AVPlayerItem *item = [notification object];
+        [item seekToTime:kCMTimeZero];
+        [self applyModifiers];
+    }
 }
 
 #pragma mark - Prop setters
 
 - (void)setResizeMode:(NSString*)mode
 {
-  if( _controls )
-  {
-    _playerViewController.videoGravity = mode;
-  }
-  else
-  {
-    _playerLayer.videoGravity = mode;
-  }
+    if( _controls )
+    {
+        _playerViewController.videoGravity = mode;
+    }
+    else
+    {
+        _playerLayer.videoGravity = mode;
+    }
+    _resizeMode = mode;
 }
 
 - (void)setPaused:(BOOL)paused
 {
-  if (paused) {
-    [_player pause];
-  } else {
-    [_player play];
-  }
-  
-  _paused = paused;
-}
-
-- (float)getCurrentTime
-{
-  return _playerItem != NULL ? CMTimeGetSeconds(_playerItem.currentTime) : 0;
-}
-
-- (void)setCurrentTime:(float)currentTime
-{
-  if( currentTime >= 0 )
-  {
-    [self setSeek: currentTime];
-  }
+    if (paused) {
+        [self stopProgressTimer];
+        [_player pause];
+    } else {
+        [self startProgressTimer];
+        [_player play];
+    }
+    
+    _paused = paused;
 }
 
 - (void)setSeek:(float)seekTime
 {
-  const int timeScale = 10000;
-  Float64 thirtyFPS = 1;
-  thirtyFPS = thirtyFPS / 30 * timeScale;
+    int timeScale = 10000;
   
   AVPlayerItem *item = _player.currentItem;
   if (item && item.status == AVPlayerItemStatusReadyToPlay) {
@@ -384,15 +515,17 @@ static NSString *const statusKeyPath = @"status";
     CMTime cmSeekTime = CMTimeMakeWithSeconds(seekTime, timeScale);
     CMTime current = item.currentTime;
     // Picking 1/30s as the tolerance. That would give us 1 frame at 30 FPS.
+      Float64 thirtyFPS = 1;
+      thirtyFPS = thirtyFPS / 30 * timeScale;
     CMTime tolerance = CMTimeMake(thirtyFPS, timeScale);
     
     if (CMTimeCompare(current, cmSeekTime) != 0) {
       [_player seekToTime:cmSeekTime toleranceBefore:tolerance toleranceAfter:tolerance completionHandler:^(BOOL finished) {
         [_eventDispatcher sendInputEventWithName:RNVideoEventSeek body:@{
           @"currentTime": [NSNumber numberWithFloat:CMTimeGetSeconds(current)],
-          @"seekTime": [NSNumber numberWithFloat:seekTime],
           @"atValue": [NSNumber numberWithLongLong:current.value],
           @"atTimescale": [NSNumber numberWithInt:current.timescale],
+          @"seekTime": [NSNumber numberWithFloat:seekTime],
           @"target": self.reactTag
         }];
       }];
@@ -428,7 +561,6 @@ static NSString *const statusKeyPath = @"status";
 
 - (void)applyModifiers
 {
-  /* volume must be set to 0 if muted is YES, or the video freezes playback */
   if (_muted) {
     [_player setVolume:0];
     [_player setMuted:YES];
@@ -437,72 +569,15 @@ static NSString *const statusKeyPath = @"status";
     [_player setMuted:NO];
   }
 
-  [_player setRate:_rate];
-  [self setPaused:_paused];
+    [self setResizeMode:_resizeMode];
+    [self setRepeat:_repeat];
+    [self setPaused:_paused];
+    [_player setRate:_rate];
   [self setControls:_controls];
 }
 
-- (void)setRepeatEnabled
-{
-  [[NSNotificationCenter defaultCenter] addObserver:self
-                                           selector:@selector(playerItemDidReachEnd:)
-                                               name:AVPlayerItemDidPlayToEndTimeNotification
-                                             object:[_player currentItem]];
-}
-
-- (void)setRepeatDisabled
-{
-  [[NSNotificationCenter defaultCenter] removeObserver:self];
-}
-
 - (void)setRepeat:(BOOL)repeat {
-  if (repeat) {
-    [self setRepeatEnabled];
-  } else {
-    [self setRepeatDisabled];
-  }
-}
-
-- (void)usePlayerViewController
-{
-    if( _player )
-    {
-        _playerViewController = [self createPlayerViewController:_player withPlayerItem:_playerItem];
-        [self addSubview:_playerViewController.view];
-    }
-}
-
-- (void)usePlayerLayer
-{
-    if( _player )
-    {
-      _playerLayer = [AVPlayerLayer playerLayerWithPlayer:_player];
-      _playerLayer.frame = self.bounds;
-      _playerLayer.needsDisplayOnBoundsChange = YES;
-    
-      [self.layer addSublayer:_playerLayer];
-      self.layer.needsDisplayOnBoundsChange = YES;
-    }
-}
-
-- (void)setControls:(BOOL)controls
-{
-    if( _controls != controls || (!_playerLayer && !_playerViewController) )
-    {
-        _controls = controls;
-        if( _controls )
-        {
-            [_playerLayer removeFromSuperlayer];
-            _playerLayer = nil;
-            [self usePlayerViewController];
-        }
-        else
-        {
-            [_playerViewController.view removeFromSuperview];
-            _playerViewController = nil;
-            [self usePlayerLayer];
-        }
-    }
+    _repeat = repeat;
 }
 
 #pragma mark - React View Management
@@ -564,21 +639,22 @@ static NSString *const statusKeyPath = @"status";
 - (void)removeFromSuperview
 {
   [self removePlayerTimeObserver];
-  [self removePlayerItemObserver];
   [self removePlayerObserver];
+  [_playerViewController.view removeFromSuperview];
+  _playerViewController = nil;
 
   [_player pause];
   _player = nil;
 
   [_playerLayer removeFromSuperlayer];
   _playerLayer = nil;
-  
-  [_playerViewController.view removeFromSuperview];
-  _playerViewController = nil;
 
+  [self removePlayerItemObserver];
 
   _eventDispatcher = nil;
   [[NSNotificationCenter defaultCenter] removeObserver:self];
+    
+    [super removeFromSuperview];
 }
 
 @end
