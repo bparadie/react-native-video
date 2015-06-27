@@ -36,6 +36,12 @@ RCT_EXPORT_MODULE();
     },
     RNVideoEventEnd: @{
       @"registrationName": @"onEnd"
+    },
+    RNVideoEventPlay: @{
+      @"registrationName": @"onPlay"
+    },
+    RNVideoEventPause: @{
+      @"registrationName": @"onPause"
     }
   };
 }
