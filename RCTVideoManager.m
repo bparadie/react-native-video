@@ -36,6 +36,12 @@ RCT_EXPORT_MODULE();
     },
     RNVideoEventEnd: @{
       @"registrationName": @"onEnd"
+    },
+    RNVideoEventPlay: @{
+      @"registrationName": @"onPlay"
+    },
+    RNVideoEventPause: @{
+      @"registrationName": @"onPause"
     }
   };
 }
@@ -47,7 +53,8 @@ RCT_EXPORT_VIEW_PROPERTY(paused, BOOL);
 RCT_EXPORT_VIEW_PROPERTY(muted, BOOL);
 RCT_EXPORT_VIEW_PROPERTY(volume, float);
 RCT_EXPORT_VIEW_PROPERTY(rate, float);
-RCT_EXPORT_VIEW_PROPERTY(seek, float);
+RCT_EXPORT_VIEW_PROPERTY(currentTime, float);
+RCT_EXPORT_VIEW_PROPERTY(controls, BOOL);
 
 - (NSDictionary *)constantsToExport
 {
